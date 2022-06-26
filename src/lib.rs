@@ -64,5 +64,5 @@ fn set_new_path(directory: &str) -> Result<(), &'static str> {
 }
 
 fn get_path() -> PathBuf {
-    return std::env::current_dir().expect("Error while getting path")
+    std::env::current_dir().expect("Error while getting path")
 }
