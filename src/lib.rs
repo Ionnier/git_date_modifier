@@ -23,6 +23,9 @@ pub fn run(directory: &str) -> Result<(), Box<dyn Error>> {
     is_git_installed()?;
     does_directory_exist(&directory)?;
     is_git_initialised(&directory)?;
+    set_new_path(&directory)?;
+    let output = Command::new("git").arg("rebase").arg("-i").arg("a3879b5").output().expect("Error when launching command");
+    print!("{}", String::from_utf8(output.stderr)?);
     Ok(())
 }
 
