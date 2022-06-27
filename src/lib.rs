@@ -2,6 +2,7 @@ use std::error::Error;
 use std::process::{Command};
 use std::fs;
 use std::path::{Path, PathBuf};
+use chrono::{self, DateTime, Local, TimeZone, NaiveDateTime};
 
 pub struct Config {
     pub directory: String
@@ -23,8 +24,9 @@ pub fn run(directory: &str) -> Result<(), Box<dyn Error>> {
     is_git_installed()?;
     does_directory_exist(&directory)?;
     is_git_initialised(&directory)?;
-    let initial_commit = get_oldest_commit(&directory)?;
-    start_rebase(&directory, &initial_commit)?;
+    let commits = get_all_commits_and_dates(&directory)?;
+    let first_commit = commits.first().unwrap();
+    start_rebase(&directory, first_commit.hash.as_str(), &commits)?;
     Ok(())
 }
 
@@ -59,35 +61,44 @@ fn is_git_initialised(directory: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn get_oldest_commit(directory: &str) -> Result<String, &'static str> {
+fn start_rebase(directory: &str, oldest_commit: &str, commits: &Vec<CommitAndDate>) -> Result<(), &'static str> {
     let initial_path = get_path();
     let initial_path = initial_path.as_path();
 
     set_new_path(&directory)?;
 
-    let number_of_commits = Command::new("git").arg("rev-list").arg("--count").arg("HEAD").output().expect("Error when launching command");
-    let number_of_commits = String::from_utf8(number_of_commits.stdout).expect("Couldn't launch number of commits command");
-    let mut number_of_commits: i32 = number_of_commits.trim().parse().expect("Couldn't parse number of commits");
-    number_of_commits -= 1;
-
-    if number_of_commits <= 0 {
-        return Err("No commits");
+    Command::new("git").arg("rebase").arg("-i").arg("--root").output().expect("Error when launching command");
+    let mut i = 0;
+    loop {
+        let output = Command::new("git").arg("status").output().expect("Error when launching command");
+        let command_output = String::from_utf8(output.stdout).unwrap();
+        let lines = command_output.split("\n").collect::<Vec<&str>>();
+        if 2+i >= lines.len(){
+            break;
+        }
+        i += 1;
+        
+        loop {
+            let mut buffer = String::new();
+            print!("Enter date in format %Y-%m-%d %H:%M:%S: ");
+            let stdin = std::io::stdin(); // We get `Stdin` here.
+            let res = stdin.read_line(&mut buffer);
+            if let Err(e) = res {
+                continue;
+            }
+            let from = NaiveDateTime::parse_from_str(&buffer.trim(), "%Y-%m-%d %H:%M:%S");
+            if let Err(e) = from {
+                eprintln!("Format is %Y-%m-%d %H:%M:%S");
+                continue;
+            }
+            let date_time = Local.from_local_datetime(&from.unwrap()).unwrap();
+            std::env::set_var("GIT_COMMITTER_DATE", date_time.format("%c").to_string());
+            Command::new("git").args(["commit", "--amend", "--no-edit", "--date", date_time.format("%c").to_string().as_str()]).output().expect("Error when launching command");
+            break;
+        }
+        
+        Command::new("git").args(["rebase", "--continue"]).output().expect("Error when launching command");
     }
-
-    let oldest_commit = Command::new("git").arg("rev-parse").arg(format!("HEAD~{}", number_of_commits)).output().expect("Error when launching command");
-    let oldest_commit = String::from_utf8(oldest_commit.stdout).expect("Couldn't launch number of commits command");
-    let oldest_commit = oldest_commit.trim().to_string();
-    set_new_path(initial_path.as_os_str().to_str().unwrap())?;
-
-    Ok(oldest_commit)
-}
-
-fn start_rebase(directory: &str, oldest_commit: &str) -> Result<(), &'static str> {
-    let initial_path = get_path();
-    let initial_path = initial_path.as_path();
-    set_new_path(&directory)?;
-
-    let output = Command::new("git").arg("rebase").arg("-i").arg(oldest_commit).output().expect("Error when launching command");
     set_new_path(initial_path.as_os_str().to_str().unwrap())?;
     Ok(())
 }
@@ -100,4 +111,46 @@ fn set_new_path(directory: &str) -> Result<(), &'static str> {
 
 fn get_path() -> PathBuf {
     std::env::current_dir().expect("Error while getting path")
+}
+
+struct CommitAndDate {
+    hash: String,
+    date: DateTime<chrono::Local>,
+}
+
+impl CommitAndDate {
+    fn new(hash: &str, date: &str) -> Result<CommitAndDate, &'static str> {
+        let from: NaiveDateTime = NaiveDateTime::parse_from_str(date, "%Y-%m-%d %H:%M:%S").unwrap();
+        let date_time = Local.from_local_datetime(&from).unwrap();
+
+        return Ok(CommitAndDate {
+            hash: hash.to_string().clone(),
+            date: date_time,
+        });
+    }
+}
+
+fn get_all_commits_and_dates(directory: &str) -> Result<Vec<CommitAndDate>, &'static str> {
+    let initial_path = get_path();
+    let initial_path = initial_path.as_path();
+
+    set_new_path(&directory)?;
+
+    let mut result: Vec<CommitAndDate> = Vec::new();
+    let output = Command::new("git").args(["log", "--oneline", "--pretty=format:\"%h %cd\"", "--date=format:'%Y-%m-%d %H:%M:%S'"]).output().expect("Error when launching command");
+    let commits = String::from_utf8(output.stdout).expect("Couldn't launch number of commits command");
+    let commits = commits.trim();
+    for commit in commits.split("\n") {
+        let commit = commit.replace("\"", "");
+        let hash = &commit[..7];
+        let date = &commit[7..];
+        let whatever = date.clone().trim().replace("'", "");
+        let date = whatever.as_str();
+        println!("{} {}", hash, date);
+        result.push(CommitAndDate::new(hash, date)?);
+
+    }
+    set_new_path(initial_path.as_os_str().to_str().unwrap())?;
+    result.reverse();
+    Ok(result)
 }
