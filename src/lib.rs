@@ -23,9 +23,8 @@ pub fn run(directory: &str) -> Result<(), Box<dyn Error>> {
     is_git_installed()?;
     does_directory_exist(&directory)?;
     is_git_initialised(&directory)?;
-    set_new_path(&directory)?;
-    let output = Command::new("git").arg("rebase").arg("-i").arg("a3879b5").output().expect("Error when launching command");
-    print!("{}", String::from_utf8(output.stderr)?);
+    let initial_commit = get_oldest_commit(&directory)?;
+    start_rebase(&directory, &initial_commit)?;
     Ok(())
 }
 
@@ -57,6 +56,39 @@ fn is_git_initialised(directory: &str) -> Result<(), &'static str> {
         eprintln!("{}", current_path.display());
         return Err("Not a git repository")
     }
+    Ok(())
+}
+
+fn get_oldest_commit(directory: &str) -> Result<String, &'static str> {
+    let initial_path = get_path();
+    let initial_path = initial_path.as_path();
+
+    set_new_path(&directory)?;
+
+    let number_of_commits = Command::new("git").arg("rev-list").arg("--count").arg("HEAD").output().expect("Error when launching command");
+    let number_of_commits = String::from_utf8(number_of_commits.stdout).expect("Couldn't launch number of commits command");
+    let mut number_of_commits: i32 = number_of_commits.trim().parse().expect("Couldn't parse number of commits");
+    number_of_commits -= 1;
+
+    if number_of_commits <= 0 {
+        return Err("No commits");
+    }
+
+    let oldest_commit = Command::new("git").arg("rev-parse").arg(format!("HEAD~{}", number_of_commits)).output().expect("Error when launching command");
+    let oldest_commit = String::from_utf8(oldest_commit.stdout).expect("Couldn't launch number of commits command");
+    let oldest_commit = oldest_commit.trim().to_string();
+    set_new_path(initial_path.as_os_str().to_str().unwrap())?;
+
+    Ok(oldest_commit)
+}
+
+fn start_rebase(directory: &str, oldest_commit: &str) -> Result<(), &'static str> {
+    let initial_path = get_path();
+    let initial_path = initial_path.as_path();
+    set_new_path(&directory)?;
+
+    let output = Command::new("git").arg("rebase").arg("-i").arg(oldest_commit).output().expect("Error when launching command");
+    set_new_path(initial_path.as_os_str().to_str().unwrap())?;
     Ok(())
 }
 
