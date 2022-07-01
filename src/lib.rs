@@ -1,8 +1,9 @@
 use std::error::Error;
+use std::io::Write;
 use std::process::{Command};
 use std::fs;
 use std::path::{Path, PathBuf};
-use chrono::{self, DateTime, Local, TimeZone, NaiveDateTime};
+use chrono::{self, Local, TimeZone, NaiveDateTime};
 
 pub struct Config {
     pub directory: String
@@ -24,9 +25,7 @@ pub fn run(directory: &str) -> Result<(), Box<dyn Error>> {
     is_git_installed()?;
     does_directory_exist(&directory)?;
     is_git_initialised(&directory)?;
-    let commits = get_all_commits_and_dates(&directory)?;
-    let first_commit = commits.first().unwrap();
-    start_rebase(&directory, first_commit.hash.as_str(), &commits)?;
+    start_rebase(&directory)?;
     Ok(())
 }
 
@@ -61,33 +60,44 @@ fn is_git_initialised(directory: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn start_rebase(directory: &str, oldest_commit: &str, commits: &Vec<CommitAndDate>) -> Result<(), &'static str> {
+fn start_rebase(directory: &str) -> Result<(), &'static str> {
     let initial_path = get_path();
     let initial_path = initial_path.as_path();
 
     set_new_path(&directory)?;
 
+    print!("Choose edit for the commits you wish to change. Press enter...");
+    let mut asd = String::new();
+    std::io::stdin().read_line(&mut asd).expect("Should work");
+
     Command::new("git").arg("rebase").arg("-i").arg("--root").output().expect("Error when launching command");
-    let mut i = 0;
     loop {
         let output = Command::new("git").arg("status").output().expect("Error when launching command");
         let command_output = String::from_utf8(output.stdout).unwrap();
         let lines = command_output.split("\n").collect::<Vec<&str>>();
-        if 2+i >= lines.len(){
-            break;
+        
+        let x = lines.first();
+        if let Some(x) = x {
+            if x.contains("On branch") {
+                break;
+            }
         }
-        i += 1;
         
         loop {
             let mut buffer = String::new();
-            print!("Enter date in format %Y-%m-%d %H:%M:%S: ");
+            print!("Enter date in format %Y-%m-%d %H:%M:%S:");
+            if let Err(_) = std::io::stdout().flush() {
+                eprintln!("Format is %Y-%m-%d %H:%M:%S");
+                continue;
+            }
             let stdin = std::io::stdin(); // We get `Stdin` here.
             let res = stdin.read_line(&mut buffer);
             if let Err(e) = res {
+                eprintln!("{}", e);
                 continue;
             }
             let from = NaiveDateTime::parse_from_str(&buffer.trim(), "%Y-%m-%d %H:%M:%S");
-            if let Err(e) = from {
+            if let Err(_) = from {
                 eprintln!("Format is %Y-%m-%d %H:%M:%S");
                 continue;
             }
@@ -111,46 +121,4 @@ fn set_new_path(directory: &str) -> Result<(), &'static str> {
 
 fn get_path() -> PathBuf {
     std::env::current_dir().expect("Error while getting path")
-}
-
-struct CommitAndDate {
-    hash: String,
-    date: DateTime<chrono::Local>,
-}
-
-impl CommitAndDate {
-    fn new(hash: &str, date: &str) -> Result<CommitAndDate, &'static str> {
-        let from: NaiveDateTime = NaiveDateTime::parse_from_str(date, "%Y-%m-%d %H:%M:%S").unwrap();
-        let date_time = Local.from_local_datetime(&from).unwrap();
-
-        return Ok(CommitAndDate {
-            hash: hash.to_string().clone(),
-            date: date_time,
-        });
-    }
-}
-
-fn get_all_commits_and_dates(directory: &str) -> Result<Vec<CommitAndDate>, &'static str> {
-    let initial_path = get_path();
-    let initial_path = initial_path.as_path();
-
-    set_new_path(&directory)?;
-
-    let mut result: Vec<CommitAndDate> = Vec::new();
-    let output = Command::new("git").args(["log", "--oneline", "--pretty=format:\"%h %cd\"", "--date=format:'%Y-%m-%d %H:%M:%S'"]).output().expect("Error when launching command");
-    let commits = String::from_utf8(output.stdout).expect("Couldn't launch number of commits command");
-    let commits = commits.trim();
-    for commit in commits.split("\n") {
-        let commit = commit.replace("\"", "");
-        let hash = &commit[..7];
-        let date = &commit[7..];
-        let whatever = date.clone().trim().replace("'", "");
-        let date = whatever.as_str();
-        println!("{} {}", hash, date);
-        result.push(CommitAndDate::new(hash, date)?);
-
-    }
-    set_new_path(initial_path.as_os_str().to_str().unwrap())?;
-    result.reverse();
-    Ok(result)
 }
